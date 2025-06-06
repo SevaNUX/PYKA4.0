@@ -1,0 +1,82 @@
+#include <Wire.h>              // Библиотека для интерфейса I²C
+#include <VL53L0X.h>           // Библиотека для VL53L0X
+#include <Servo.h>             // Библиотека для управления сервоприводами
+
+// Объекты для сенсоров и двигателей
+VL53L0X sensor;
+Servo verticalServo;          // Управление первым сервоприводом (вертикальная ось)
+Servo horizontalServo;        // Управление вторым сервоприводом (горизонтальная ось)
+
+// Назначаем номера выводов Arduino
+const int VERTICAL_SERVO_PIN = 9;   // Управляемый вывод для вертикальной оси
+const int HORIZONTAL_SERVO_PIN = 10;// Управляемый вывод для горизонтальной оси
+
+// Общие настройки и диапазоны сканирования
+float startVerticalAngle = 0;      // Начальный угол вертикального привода
+float endVerticalAngle = 90;       // Конечный угол вертикального привода
+float stepVerticalAngle = 10;      // Шаг изменения угла вертикального перемещения
+
+float startHorizontalAngle = 0;    // Начальный угол горизонтального привода
+float endHorizontalAngle = 180;    // Конечный угол горизонтального привода
+float stepHorizontalAngle = 10;    // Шаг изменения угла горизонтального перемещения
+
+// Глобальные константы
+#define HEIGHT_SENSOR 100          // Высота установки датчика над землей (в мм)
+
+void setup() {
+  Serial.begin(9600);              // Начинаем работу с последовательным портом
+  Wire.begin();                    // Включаем интерфейс I²C
+  sensor.init();                   // Инициализируем VL53L0X
+  sensor.setTimeout(500);          // Увеличиваем таймаут ожидания чтения
+  
+  // Присоединяем сервоприводы к соответствующим выходам
+  verticalServo.attach(VERTICAL_SERVO_PIN);
+  horizontalServo.attach(HORIZONTAL_SERVO_PIN);
+}
+
+void loop() {
+  // Основной цикл сканирования пространства
+  for(float v_angle = startVerticalAngle; v_angle <= endVerticalAngle; v_angle += stepVerticalAngle) {
+    verticalServo.write(v_angle);  // Установка текущего угла вертикального отклонения
+    delay(500);                     // Время на стабилизацию сервопривода
+    
+    for(float h_angle = startHorizontalAngle; h_angle <= endHorizontalAngle; h_angle += stepHorizontalAngle) {
+      horizontalServo.write(h_angle); // Установка текущего угла горизонтального отклонения
+      delay(500);                      // Время на стабилизацию сервопривода
+      
+      if(sensor.timeoutOccurred()) { continue; } // Пропустить замер, если произошел таймаут
+      
+      // Чтение дистанции от датчика
+      uint16_t distance_mm = sensor.readRangeSingleMillimeters();
+      
+      // Если сигнал слабый или неверный (очень большое число), пропускаем замер
+      if(distance_mm > 2000 || distance_mm == 0) continue;
+      
+      // Выводим полученные значения углов и расстояние
+      Serial.print("Горизонтальный угол: "); Serial.print(h_angle); Serial.print("\t");
+      Serial.print("Вертикальный угол: "); Serial.print(v_angle); Serial.print("\t");
+      Serial.print("Расстояние: "); Serial.println(distance_mm);
+      
+      // Рассчитываем координаты объекта
+      calculateCoordinates(h_angle, v_angle, distance_mm);
+    }
+  }
+}
+
+// Функция расчета координат объекта (х, у, z)
+void calculateCoordinates(float h_angle, float v_angle, float dist_mm) {
+  float pi = 3.14159;
+  float alpha_rad = h_angle * pi / 180.0;  // Горизонтальный угол в радианах
+  float beta_rad = v_angle * pi / 180.0;   // Вертикальный угол в радианах
+  
+  // Координаты X и Y зависят от угла горизонта и длины луча
+  float x_coord = dist_mm * cos(beta_rad) * cos(alpha_rad);
+  float y_coord = dist_mm * cos(beta_rad) * sin(alpha_rad);
+  
+  // Координата Z определяется высотой датчика плюс компонент вдоль вертикальной плоскости
+  float z_coord = HEIGHT_SENSOR + dist_mm * sin(beta_rad);
+  
+  // Выведем координаты объекта
+  Serial.print("Объект обнаружен в точке (X,Y,Z): ");
+  Serial.print(x_coord); Serial.print(","); Serial.print(y_coord); Serial.print(","); Serial.println(z_coord);
+}
