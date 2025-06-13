@@ -11,10 +11,10 @@ GyverOLED<SSD1306_128x64, OLED_NO_BUFFER> lcd;
 #define SRV_AMOUNT 7		// Приводы  
 #define LASER A0 // нижний лазер
 #define LASER1 A1 // верхний лазер
-#define MOTORA1 5 // нижний лазер
-#define MOTORA2 4 // верхний лазер
-#define MOTORB1 3 // нижний лазер
-#define MOTORB2 2 // верхний лазер
+//#define MOTORA1 5 // нижний лазер
+//#define MOTORA2 4 // верхний лазер
+//#define MOTORB1 3 // нижний лазер
+//#define MOTORB2 2 // верхний лазер
 
 
 #define IR_1    0xA2
@@ -81,13 +81,15 @@ void setup() {
 attachInterrupt(0, irIsr, FALLING);
 
 lcd.init();        // инициализация
-  lcd.clear();       // очистка
+lcd.clear();       // очистка
+lcd.setCursor(0, 0); lcd.print("PYKA 4.0 by Solo team");
+lcd.setCursor(0, 1); lcd.print("---------------------");
+lcd.setCursor(0, 2); lcd.print("release: 4.0-1.2.3-r9");
+lcd.setCursor(0, 3); lcd.print("date: 13/06/25");
+lcd.setCursor(0, 5); lcd.print("- - - - - - - - -");
+delay (2000);
+lcd.clear();
 
-  // прямоугольник, углы (0, 0) и (30, 50), обводка
- // lcd.rect(0, 0, 30, 50, OLED_STROKE);
-
-  // окружность, центр (80, 30), радиус 10, заливка
- // lcd.circle(80, 30, 10, OLED_FILL);
 
   Serial.println("---- Go ----");
 // Инициализация основных контактов сервомашинок и 
@@ -98,7 +100,10 @@ lcd.init();        // инициализация
     //Serial.print("Drive - ");Serial.print(i);
   }  
 
-  
+  pinMode(LASER, OUTPUT); 
+  pinMode(LASER1, OUTPUT); 
+
+lcd.setCursor(0, 0); lcd.print("Setup: Done");
 }
 
 float inverseKinematics(float x, float y, float z, float Qp) {
@@ -259,107 +264,151 @@ delay(200);
  
   
 if (ir.available()) {
-  Serial.println("IR");
+lcd.setCursor(0, 1); lcd.clear(); lcd.print("PYKA 4.0: OnLine");
+  Serial.println("PYKA 4.0: OnLine");
     switch (ir.readCommand()) {
-      // выводим в порт, тут может быть ваш код
+      // выводим в порт, тут может быть код
       case IR_1: {
+        Serial.println("Mode: Console");
+        lcd.clear();
         lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Console");
-       serialInput();
-       inverseKinematics(Xp, Yp, Zp, Qp);
-       
-       
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Enter the coordinates x, y, z and the angle of approach to the target of the arduino ide console");
+        serialInput();
+        inverseKinematics(Xp, Yp, Zp, Qp);
         break;
-
       }
       case IR_2:{
-       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual");
+         Serial.println("Mode: Manual");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("X-0, Y-160, Z-90, Qp-90. Use the remote. Up:Y++, Down:Y--, Left:X--, Right: X++, Star: Z++, Hash: Z--");
         Xp=0;
         Yp=160;
         Zp=90;
         Qp=90;
         inverseKinematics(Xp, Yp, Zp, Qp);
         break;
-
       }
-      case IR_3: Serial.println("Pressed 3"); break;
-      case IR_4: Serial.println("Pressed 4"); break;
-      case IR_5: Serial.println("Pressed 5"); break;
-      case IR_6:
-      {
-          Serial.println("RUNMOTOR-A");
-          RUNMOTORA();
-          break;
-        }
-   
-      case IR_7:
-        {
-          Serial.println("RUNMOTOR-B");
-          RUNMOTORB();
-          break;
-        }
       
-      case IR_8:
-        {
-          TARGETING();
-          break;
-        }
+      case IR_3: {
+      Serial.println("Mode: Demo1");
+      lcd.clear();
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Automatic");
+       lcd.autoPrintln(true);
+      lcd.setCursor(0, 2); lcd.print("Technological welding base mode");
       
-      case IR_9:
-        {
-          WELDING();
-          break;
-        } 
-            
-      case IR_STAR: 
-       {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Zp+=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
       break;
       }
+      
+      case IR_4: Serial.println("Pressed 4"); break;
+      
+      case IR_5: Serial.println("Pressed 5"); break;
+      
+      case IR_6:  {
+        Serial.println("Mode: Motor A");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Motor A");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the lower drive");
+        RUNMOTORA();
+        break;
+      }
+      case IR_7:  {
+        Serial.println("Mode: Motor B");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Motor B");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the uper drive");
+        RUNMOTORB();
+        break;
+      }
+      case IR_8:  {
+        Serial.println("Mode: lASER A");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Laser A");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the lower laser");
+        TARGETING();
+        break;
+        }
+      
+      case IR_9:  {
+        Serial.println("Mode: lASER B");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Laser B");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Welding demonstration mode");
+        WELDING();
+        break;
+        } 
+            
+      case IR_STAR: {
+          Serial.println("Mode: Manual Z+=5");
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Z+=5");
+         Zp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
 
-      case IR_0:
-       {
-         lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Parking");
-          PARKING();
-          lcd.setCursor(30, 0); lcd.print("          ");
-          break;
+      case IR_0:  {
+       Serial.println("Mode: Parking");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Parking");
+        lcd.autoPrintln(true);
+       lcd.setCursor(0, 2); lcd.print("The robot's drives are set to the default position");
+       PARKING();
+       break;
        }
 
 
-      case IR_HASH: 
- {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Zp-=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
-      break;
+      case IR_HASH: {
+       Serial.println("Mode: Manual Z-=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Z-=5");
+       Zp-=5;
+       inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
       }
-
       case IR_UP: {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Yp+=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
-      break;
+       Serial.println("Mode: Manual Y+=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Y+=5");
+        Yp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
       }
       case IR_LEFT:  {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Xp-=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
-      break;
+       Serial.println("Mode: Manual X-=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual X-=5");
+        Xp-=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
       }
-      case IR_OK: Serial.println("Pressed ok"); break;
-      case IR_RIGHT: 
-       {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Xp+=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
-      break;
+      case IR_OK:{
+         lcd.clear();
+         Serial.println("Pressed ok"); 
+         break;
+      }
+
+      case IR_RIGHT: {
+        Serial.println("Mode: Manual X+=5");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual X+=5");
+        Xp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
       }
       case IR_DOWN: {
-      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
-      Yp-=5;
-      inverseKinematics(Xp, Yp, Zp, Qp);
-      break;
+        Serial.println("Mode: Manual Y-=5");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Y-=5");
+        Yp-=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
       }
     }
   }
@@ -441,7 +490,7 @@ void TARGETING(){ //НИЖНИЙ ЛАЗЕР
       delay(50);
       digitalWrite(LASER, LOW);
       delay(50);
-             Serial.println("BINK");
+      Serial.println("BINK");
    }
 }
 
@@ -463,21 +512,22 @@ void JAW(){ // СХВАТ
 
 
 void RUNMOTORA() {
-digitalWrite(MOTORA2, LOW); // Отключаем задний ход двигателя A
+/* digitalWrite(MOTORA2, LOW); // Отключаем задний ход двигателя A
  analogWrite(MOTORA1, 255);
   delay(1000);
        analogWrite(MOTORA2, 255); // Полная скорость вперед двигатель A
   digitalWrite(MOTORA1, LOW); // Отключаем задний ход двигателя A
   delay(1000);
  digitalWrite(MOTORA2, LOW);
+ */
 }
 
-void RUNMOTORB() {
+void RUNMOTORB() {/*
 digitalWrite(MOTORB2, LOW); // Отключаем задний ход двигателя A
  analogWrite(MOTORB1, 255);
   delay(1000);
        analogWrite(MOTORB2, 255); // Полная скорость вперед двигатель A
   digitalWrite(MOTORB1, LOW); // Отключаем задний ход двигателя A
   delay(1000);
- digitalWrite(MOTORB2, LOW);
+ digitalWrite(MOTORB2, LOW);*/
 }
