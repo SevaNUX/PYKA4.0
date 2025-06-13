@@ -1,0 +1,483 @@
+#include <Servo.h> // библиотека для работы с серво-приводами
+#include <GyverOLED.h>
+#include <NecDecoder.h>
+
+
+NecDecoder ir;
+GyverOLED<SSD1306_128x64, OLED_NO_BUFFER> lcd;
+
+// --------- Настройки ---------
+#define STEP_DELAY 15		// Переменная для установки пауз
+#define SRV_AMOUNT 7		// Приводы  
+#define LASER A0 // нижний лазер
+#define LASER1 A1 // верхний лазер
+#define MOTORA1 5 // нижний лазер
+#define MOTORA2 4 // верхний лазер
+#define MOTORB1 3 // нижний лазер
+#define MOTORB2 2 // верхний лазер
+
+
+#define IR_1    0xA2
+#define IR_2    0x62
+#define IR_3    0xE2
+#define IR_4    0x22
+#define IR_5    0x2
+#define IR_6    0xC2
+#define IR_7    0xE0
+#define IR_8    0xA8
+#define IR_9    0x90
+#define IR_STAR 0x68
+#define IR_0    0x98
+#define IR_HASH 0xB0
+#define IR_UP   0x18
+#define IR_LEFT 0x10
+#define IR_OK   0x38
+#define IR_RIGHT 0x5A
+#define IR_DOWN 0x4A
+
+
+byte SRV_PIN[SRV_AMOUNT] = {6, 7, 8, 9, 10, 11, 12};               // Пины серв
+byte SRV_DEF[SRV_AMOUNT] = {90, 90, 90, 180, 100, 90, 40};          // Положение по умолчанию 2 ПРИВОД НА 0
+byte SRV_CUR[SRV_AMOUNT] = {90, 90, 90, 180, 100, 90, 40};         // Текущее положение сер
+byte SRV_MIN[SRV_AMOUNT] = {0, 26, 0, 0, 0, 0, 40};                // Минимальная позиция поворота
+byte SRV_MID[SRV_AMOUNT] = {90, 90,  90, 90, 90, 84};  // Среднее позиция поворота
+byte SRV_MAX[SRV_AMOUNT] = {180, 270, 180, 180, 180, 180, 114};  // Максимальная позиция поворота
+
+
+
+
+// Подключение сервоприводов
+//#define SERVO_PIN_1 6   // Первый сервопривод
+//#define SERVO_PIN_2 7  // Второй сервопривод
+//#define SERVO_PIN_3 8  // Третий сервопривод
+//#define SERVO_PIN_4 9  // Четвертый сервопривод
+
+byte SRV = 0;			//Дефолтное значение сервы
+byte VALUE = 0;			//Дефолтное значение угла
+
+// Длина звеньев манипулятора
+const float L1 = 100.0f;
+const float L2 = 94.0f;
+const float L3 = 61.0f;
+const float L4 = 74.0f;
+
+// Переменные для координат цели
+float Xp = 0.0;
+float Yp = 0.0;
+float Zp = 0.0;
+float Qp = 0.0;
+
+// Объекты сервоприводов
+//Servo servo1, servo2, servo3, servo4;
+Servo SDRV[SRV_AMOUNT]; // Инициализация сервомоторов
+void setup() {
+ // --------- Консоль ---------
+  Serial.begin(9600); 
+  while (! Serial) {
+    delay(1);
+  }
+  
+
+attachInterrupt(0, irIsr, FALLING);
+
+lcd.init();        // инициализация
+  lcd.clear();       // очистка
+
+  // прямоугольник, углы (0, 0) и (30, 50), обводка
+ // lcd.rect(0, 0, 30, 50, OLED_STROKE);
+
+  // окружность, центр (80, 30), радиус 10, заливка
+ // lcd.circle(80, 30, 10, OLED_FILL);
+
+  Serial.println("---- Go ----");
+// Инициализация основных контактов сервомашинок и 
+  for (int i = 0; i < 7; i++) {
+	  SDRV[i].attach(SRV_PIN[i]);		// Инициализация пинов сервомашинок
+	  SDRV[i].write(SRV_DEF[i]);		// Установка начального положения
+	  SRV_CUR[i]=SRV_DEF[i];		// Установка текущего положения
+    //Serial.print("Drive - ");Serial.print(i);
+  }  
+
+  
+}
+
+float inverseKinematics(float x, float y, float z, float Qp) {
+ float at3;
+//  int a0, a1, a2, a3;
+  //float qt0, qt1, qt2, qt3;
+  int at0, at1, at2;
+ /*
+  Serial.println("-----------------------------");
+  float q1, q2, q3, q4, at3;
+  int a0, a1, a2, a3;
+  
+  //float qt0, qt1, qt2, qt3;
+  int at0, at1, at2;
+
+  // Угол первой оси Q1
+  q1 = atan2(y, x);
+
+  // Корректируем высоту относительно последнего звена
+  float z_prime = z - L4;
+
+  // Горизонтальное расстояние от центра оси до точки назначения
+  float r = sqrt(x*x + y*y);
+
+  // Общая длина до конечной точки
+  float d = sqrt(r*r + z_prime*z_prime);
+
+  // Косинусы и синусы для определения угла Q2
+  float cos_q2 = (pow(L1, 2) + pow(d, 2) - pow(L2, 2))/(2*L1*d);
+  float sin_q2 = sqrt(1 - pow(cos_q2, 2));
+  //if(isnan(sin_q2)) return NAN; // Проверка ошибок
+
+  q2 = atan2(sin_q2, cos_q2);
+
+  // Уточняем положение третьего сустава Q3
+  float cos_q3 = (d*d + L2*L2 - L3*L3)/(2*d*L2);
+  float sin_q3 = sqrt(1 - pow(cos_q3, 2));
+  //if(isnan(sin_q3)) return NAN;
+
+  q3 = atan2(sin_q3, cos_q3) - q2;
+
+  // Угол четвертого сустава равен заданному углу подхода
+  q4 = Qp;
+
+
+
+// Перевод углов в диапазон серво (от 0 до 180 градусов)
+    a0 = radiansToDegrees(q1);
+    a1 = radiansToDegrees(q2);
+    a2 = radiansToDegrees(q3);
+    a3 = radiansToDegrees(q4);
+
+
+
+  // Преобразуем радианы в градусы и задаём позиции сервоприводов
+ //servo1.write((q1*180/PI)+90);     // первое звено — поворотное основани
+ //servo2.write((q2*180/PI)+90);     // второй сустав — поднимает руку вверх-вниз
+ //servo3.write((q3*180/PI)+90);     // третий сустав — движение вперед-назад
+  //servo4.write((q4*180/PI)+90);     // четвертый сустав — наклон рабочей головки
+
+
+*/
+Serial.println("-----------------------------");
+Serial.print("x ");Serial.print(x);
+Serial.print(", y ");Serial.print(y);
+Serial.print(", z ");Serial.println(z);
+
+
+
+
+
+ 
+ 
+ 
+ //  lcd.setCursor(7, 0);   // курсор на конец надписи
+ //   lcd.print(val);
+ //   lcd.print("  ");
+
+int Zpf=z-L1;
+int Xt = sqrt(pow(x, 2) + pow(y, 2)); // Координата X целевой  точки в основной плоскости движения звеньев 60, 90 и 10
+int dX = L4*sin(radians(Qp)); // Корректировка X на ориентацию 3-го звена
+int dY = L4*cos(radians(Qp)); // Корректировка Y на ориентацию 3-го звена (10)
+int Xn = Xt - dX; // Позиция X в основной плоскости, куда должен попасть шарнир 3-го звена
+int Yn = Zpf + dY; // Позиция Y в основной плоскости, куда должен попасть шарнир 3-го звена
+int dt = sqrt(pow(Xn, 2) + pow(Yn, 2)); // Длина отрезка между 1-м и 3-м  шарнирами
+int qt1 = degrees(atan2(Yn, Xn)); // Вспомогательный угол 1
+float sq2 = (pow(dt, 2) + pow(L2, 2) - pow(L3, 2)) / (2 * L2 * dt);
+int qt2 = degrees(acos(sq2));
+float sq3 = (pow(L2, 2) + pow(L3, 2) - pow(dt, 2)) / (2 * L2 * L3);
+float qt3 = degrees(acos(sq3));
+Serial.println(qt3); 
+at0 = degrees(atan2(y, x)); // Угол поворота 0-й оси если указываем координаты Х и Y
+at1 = qt1 + qt2; // Угол поворота сервомотора 1-й оси относительно горизонтали
+at2 = 180 - qt3; // Угол поворота сервомотора 2-й оси относительно 1-й
+//at3 =  (180-qt2 - qt3 )+(90-qt1)-90 + Qp; // Угол поворота 3-й оси относительно перпендикуляра к 2-й оси 
+at3= (qt2 - qt3 - qt1 + Qp);
+Serial.print("a0 ");Serial.print(at0);
+Serial.print(", a1 ");Serial.print(at1);
+Serial.print(", a2 ");Serial.print(at2);
+Serial.print(", a3 ");Serial.println(at3); 
+
+
+
+
+
+lcd.clear();
+//lcd.home();   // курсор в начало
+lcd.setCursor(0, 2); lcd.print("X:");lcd.print(x);
+lcd.setCursor(0, 3); lcd.print("Y:");lcd.print(y);
+lcd.setCursor(0, 4);lcd.print("Z:");lcd.print(z);
+lcd.setCursor(0, 5);lcd.print("Qp:");lcd.print(Qp);
+lcd.setCursor(62, 2); lcd.print("a0:");lcd.print(at0);
+lcd.setCursor(62, 3);lcd.print("a1:");lcd.print(at1);
+lcd.setCursor(62, 4);lcd.print("a2:");lcd.print(at2);
+lcd.setCursor(62, 5);lcd.print("a3:");lcd.print(at3);
+
+delay(300);
+
+ SRV=0; VALUE=at0; MOVETO();
+ SRV=1; VALUE=at1; MOVETO();
+ SRV=2; VALUE=(180-at2); MOVETO();
+ SRV=3; VALUE=at3; MOVETO();
+//servo1.write(at0);
+//servo2.write(at1);
+//servo3.write(at2);
+//servo4.write(at3);
+
+}
+
+
+
+void irIsr() {
+  ir.tick();
+}
+
+
+
+void loop() {
+
+
+ /*   // сборка
+  
+SDRV[SRV].write(90);     // первое звено — поворотное основание
+delay(2000);
+for (int angle = 16; angle <= 180 ; angle++)
+{
+SDRV[SRV].write(angle);
+Serial.println(angle);
+delay(200);
+}
+*/
+ // Serial.println("TARGETING");
+//TARGETING();
+//serialInput();
+
+
+  //  inverseKinematics(Xp, Yp, Zp, Qp);
+ 
+  
+if (ir.available()) {
+  Serial.println("IR");
+    switch (ir.readCommand()) {
+      // выводим в порт, тут может быть ваш код
+      case IR_1: {
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Console");
+       serialInput();
+       inverseKinematics(Xp, Yp, Zp, Qp);
+       
+       
+        break;
+
+      }
+      case IR_2:{
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual");
+        Xp=0;
+        Yp=160;
+        Zp=90;
+        Qp=90;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+
+      }
+      case IR_3: Serial.println("Pressed 3"); break;
+      case IR_4: Serial.println("Pressed 4"); break;
+      case IR_5: Serial.println("Pressed 5"); break;
+      case IR_6:
+      {
+          Serial.println("RUNMOTOR-A");
+          RUNMOTORA();
+          break;
+        }
+   
+      case IR_7:
+        {
+          Serial.println("RUNMOTOR-B");
+          RUNMOTORB();
+          break;
+        }
+      
+      case IR_8:
+        {
+          TARGETING();
+          break;
+        }
+      
+      case IR_9:
+        {
+          WELDING();
+          break;
+        } 
+            
+      case IR_STAR: 
+       {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Zp+=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+
+      case IR_0:
+       {
+         lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Parking");
+          PARKING();
+          lcd.setCursor(30, 0); lcd.print("          ");
+          break;
+       }
+
+
+      case IR_HASH: 
+ {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Zp-=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+
+      case IR_UP: {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Yp+=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+      case IR_LEFT:  {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Xp-=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+      case IR_OK: Serial.println("Pressed ok"); break;
+      case IR_RIGHT: 
+       {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Xp+=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+      case IR_DOWN: {
+      lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("X++");
+      Yp-=5;
+      inverseKinematics(Xp, Yp, Zp, Qp);
+      break;
+      }
+    }
+  }
+
+ /*   // сборка
+servo4.write(0);     // первое звено — поворотное основание
+delay(2000);
+for (int angle = 16; angle <= 180 ; angle++)
+{
+servo4.write(angle);
+Serial.println(angle);
+delay(200);
+}
+*/
+
+}
+
+
+void serialInput(){
+ String inputStrX; 
+  float tempValue;            
+
+  // Ожидание ввода значения X
+  while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();         
+  Xp = tempValue;                            
+  Serial.print("Значение X установлено: "); Serial.println(Xp);
+
+  while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();          
+  Yp = tempValue;                          
+  Serial.print("Значение Y установлено: "); Serial.println(Yp);
+ 
+ while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n');
+  tempValue = inputStrX.toFloat();          
+  Zp = tempValue;                          
+  Serial.print("Значение Z установлено: "); Serial.println(Zp);
+
+ while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();          
+  Qp = tempValue;                            
+  Serial.print("Значение Qp установлено: "); Serial.println(Qp);
+ 
+}
+
+void MOVETO(){   // Крутим сервой
+int angle;
+if (SRV_CUR[SRV]<=VALUE) {  // Едем от текущего угла к целевому
+  for (angle = SRV_CUR[SRV]; angle <= VALUE; angle++) {
+    SDRV[SRV].write(angle);
+    delay(STEP_DELAY * 1.5*2);
+  }
+}
+  else {
+  for (angle = SRV_CUR[SRV]; angle >= VALUE; angle--) { // Едем от текущего угла к целевому
+    SDRV[SRV].write(angle);
+    delay(STEP_DELAY * 1.5);
+    }
+  }
+SRV_CUR[SRV]=VALUE;
+}
+
+void PARKING(){
+  for (int i = 0; i < 7; i++) {
+	 SRV=i; VALUE=SRV_DEF[i]; MOVETO();
+   //SDRV[i].attach(SRV_PIN[i]);		// Инициализация пинов сервомашинок
+    } 
+
+}
+
+void TARGETING(){ //НИЖНИЙ ЛАЗЕР
+   for (int i=0; i<=24; i++) // мигание лазерным светодиодом
+   {
+      digitalWrite(LASER, HIGH);
+      delay(50);
+      digitalWrite(LASER, LOW);
+      delay(50);
+             Serial.println("BINK");
+   }
+}
+
+void WELDING(){ //ВЕРХНИЙ ЛАЗЕР
+  for (int i=0; i<=24; i++) // мигание лазерным светодиодом
+   {
+      digitalWrite(LASER1, HIGH);
+      delay(50);
+      digitalWrite(LASER1, LOW);
+      delay(50);
+   }
+}
+
+
+
+void JAW(){ // СХВАТ
+  
+}
+
+
+void RUNMOTORA() {
+digitalWrite(MOTORA2, LOW); // Отключаем задний ход двигателя A
+ analogWrite(MOTORA1, 255);
+  delay(1000);
+       analogWrite(MOTORA2, 255); // Полная скорость вперед двигатель A
+  digitalWrite(MOTORA1, LOW); // Отключаем задний ход двигателя A
+  delay(1000);
+ digitalWrite(MOTORA2, LOW);
+}
+
+void RUNMOTORB() {
+digitalWrite(MOTORB2, LOW); // Отключаем задний ход двигателя A
+ analogWrite(MOTORB1, 255);
+  delay(1000);
+       analogWrite(MOTORB2, 255); // Полная скорость вперед двигатель A
+  digitalWrite(MOTORB1, LOW); // Отключаем задний ход двигателя A
+  delay(1000);
+ digitalWrite(MOTORB2, LOW);
+}
