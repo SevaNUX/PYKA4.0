@@ -1,0 +1,590 @@
+#include <Servo.h> // библиотека для работы с серво-приводами
+#include <GyverOLED.h>
+#include <NecDecoder.h>
+#include <Wire.h> // библиотека I²C
+#include <VL53L0X.h>
+
+
+NecDecoder ir;
+GyverOLED<SSD1306_128x64, OLED_NO_BUFFER> lcd;
+
+// --------- Настройки ---------
+#define STEP_DELAY 15
+#define SRV_AMOUNT 7
+#define LASER A0 // нижний лазер
+//#define LASER1 A1 // верхний лазер
+#define MOTORB1 A2
+#define MOTORB2 A3
+#define MOTORA1 3 
+#define MOTORA2 5
+
+#define IR_1    0xA2
+#define IR_2    0x62
+#define IR_3    0xE2
+#define IR_4    0x22
+#define IR_5    0x2
+#define IR_6    0xC2
+#define IR_7    0xE0
+#define IR_8    0xA8
+#define IR_9    0x90
+#define IR_STAR 0x68
+#define IR_0    0x98
+#define IR_HASH 0xB0
+#define IR_UP   0x18
+#define IR_LEFT 0x10
+#define IR_OK   0x38
+#define IR_RIGHT 0x5A
+#define IR_DOWN 0x4A
+
+                          // 
+byte SRV_PIN[SRV_AMOUNT] = {6, 7, 8, 9, 10, 11, 12};               // Пины серв
+byte SRV_DEF[SRV_AMOUNT] = {90, 90, 0, 180, 0, 90, 40};          // Положение по умолчанию 2 ПРИВОД НА 0 предусмотреть отвод привода
+byte SRV_CUR[SRV_AMOUNT] =    {90, 90, 0, 180, 0, 90, 40};         // Текущее положение сер
+//byte SRV_DEF[SRV_AMOUNT] = {90, 90, 90, 180, 100, 90, 40};          // Положение по умолчанию 2 ПРИВОД НА 0
+//byte SRV_CUR[SRV_AMOUNT] = {90, 90, 90, 180, 100, 90, 40};         // Текущее положение сер
+
+byte SRV_MIN[SRV_AMOUNT] = {0, 30, 0, 0, 0, 0, 40};                // Минимальная позиция поворота
+byte SRV_MAX[SRV_AMOUNT] = {180, 180, 180, 180, 180, 180, 114};  // minibot max
+//byte SRV_MID[SRV_AMOUNT] = {90, 90,  90, 90, 90, 90};  // Среднее позиция поворота
+
+byte SRV = 0;
+byte VALUE = 0;			//Дефолтное значение угла
+byte scanmode = true; // режим сканирования
+
+//int TARGET[181]; // Массив радара 
+//int TARG_IN=0;  // начало цели
+//int TARG_OUT=0;  //конец цели
+
+const int scanSteps = 50; // Количество шагов сканирования (пример)
+// Длина звеньев манипулятора
+const float L1 = 100.0f;
+const float L2 = 94.0f;
+const float L3 = 61.0f;
+const float L4 = 74.0f;
+
+
+/*
+const float L1 = 167.0f;
+const float L2 = 247.0f;
+const float L3 = 134.0f;
+const float L4 = 75.0f;
+*/
+
+// Переменные для координат цели
+float Xp = 0.0;
+float Yp = 0.0;
+float Zp = 0.0;
+float Qp = 0.0;
+
+Servo SDRV[SRV_AMOUNT]; // Инициализация сервомоторов
+VL53L0X sensor;
+
+int distanceArray[scanSteps]; // Массив хранения дистанций
+int dist;
+//uint16_t 
+int target;
+
+unsigned long lastScanTime = 0; // Время последнего полного сканирования
+long scanInterval = 5000; // Интервал между полными сканированиями (мс)
+
+
+
+void setup() {
+  Serial.begin(9600); 
+  while (! Serial) {
+    delay(1);
+  }
+attachInterrupt(0, irIsr, FALLING);
+Wire.begin();
+
+  sensor.setTimeout(500);
+  if (!sensor.init())
+  {
+    Serial.println("Failed to detect and initialize sensor!");
+    lcd.clear();       // очистка
+    lcd.setCursor(0, 0); lcd.print("VL53L0X Failed!!!");
+    while (1) {}
+  }
+ // Настройка длительности замеров (budget timing)
+  sensor.setMeasurementTimingBudget(20000); // Время бюджета измерений, микросекунды (минимум примерно 15 ms)
+
+  // Авто-калибровка датчика
+  sensor.startContinuous(); // Начинаем цикл непрерывных измерений
+  //sensor.startContinuous(50);
+
+lcd.init();        // инициализация
+lcd.clear();       // очистка
+lcd.setCursor(0, 0); lcd.print("PYKA 4.0 by Solo team");
+lcd.setCursor(0, 2); lcd.print("release: 4.0-1.2.3-r9");
+lcd.setCursor(0, 3); lcd.print("date: 13/06/25");
+lcd.setCursor(0, 5); lcd.print("Setup: Done");
+delay (2000);
+
+
+  for (int i = 0; i < 7; i++) {
+	  SDRV[i].attach(SRV_PIN[i]);		// Инициализация пинов сервомашинок
+	  SDRV[i].write(SRV_DEF[i]);		// Установка начального положения
+	  SRV_CUR[i]=SRV_DEF[i];		// Установка текущего положения
+  }  
+  pinMode(LASER, OUTPUT); 
+//  pinMode(LASER1, OUTPUT); 
+    pinMode(MOTORB1, OUTPUT); 
+  pinMode(MOTORB2, OUTPUT); 
+    pinMode(MOTORA1, OUTPUT); 
+  pinMode(MOTORA2, OUTPUT); 
+
+PARKING();
+Serial.println("---- Go ----");
+}
+
+float inverseKinematics(float x, float y, float z, float Qp) {
+  float at3;
+  int at0, at1, at2;
+  int Zpf=z-L1;
+  int Xt = sqrt(pow(x, 2) + pow(y, 2)); // Координата X целевой  точки в основной плоскости движения звеньев 60, 90 и 10
+  int dX = L4*sin(radians(Qp)); // Корректировка X на ориентацию 3-го звена
+  int dY = L4*cos(radians(Qp)); // Корректировка Y на ориентацию 3-го звена (10)
+  int Xn = Xt - dX; // Позиция X в основной плоскости, куда должен попасть шарнир 3-го звена
+  int Yn = Zpf + dY; // Позиция Y в основной плоскости, куда должен попасть шарнир 3-го звена
+  int dt = sqrt(pow(Xn, 2) + pow(Yn, 2)); // Длина отрезка между 1-м и 3-м  шарнирами
+  int qt1 = degrees(atan2(Yn, Xn)); // Вспомогательный угол 1
+  float sq2 = (pow(dt, 2) + pow(L2, 2) - pow(L3, 2)) / (2 * L2 * dt);
+  int qt2 = degrees(acos(sq2));
+  float sq3 = (pow(L2, 2) + pow(L3, 2) - pow(dt, 2)) / (2 * L2 * L3);
+  float qt3 = degrees(acos(sq3));
+  at0 = degrees(atan2(y, x)); // Угол поворота 0-й оси если указываем координаты Х и Y
+  at1 = qt1 + qt2; // Угол поворота сервомотора 1-й оси относительно горизонтали
+  at2 = qt3; // Угол поворота сервомотора 2-й оси относительно 1-й
+  at3 =  (180-qt2 - qt3 )+(90-qt1)-90 + Qp; // Угол поворота 3-й оси относительно перпендикуляра к 2-й оси 
+  //at3= (qt2 - qt3 - qt1 + Qp);
+  //Serial.print("a0 ");Serial.print(at0);
+  //Serial.print(", a1 ");Serial.print(at1);  
+  //Serial.print(", a2 ");Serial.print(at2);
+  //Serial.print(", a3 ");Serial.println(at3); 
+  //lcd.clear();
+  //lcd.home();   // курсор в начало
+  /*lcd.setCursor(0, 2); lcd.print("X:");lcd.print(x);
+  lcd.setCursor(0, 3); lcd.print("Y:");lcd.print(y);
+  lcd.setCursor(0, 4);lcd.print("Z:");lcd.print(z);
+  lcd.setCursor(0, 5);lcd.print("Qp:");lcd.print(Qp);
+  lcd.setCursor(62, 2); lcd.print("a0:");lcd.print(at0);
+  lcd.setCursor(62, 3);lcd.print("a1:");lcd.print(at1);
+  lcd.setCursor(62, 4);lcd.print("a2:");lcd.print(at2);
+  lcd.setCursor(62, 5);lcd.print("a3:");lcd.print(at3);
+*/
+const char labels[][4] = {"X:", "Y:", "Z:", "Qp:", "a0:", "a1:", "a2:", "a3:"};
+float data[] = {x, y, z, Qp, at0, at1, at2, at3};
+
+for (int row = 2; row <= 5; row++) {
+  lcd.setCursor(0, row);
+  lcd.print(labels[row - 2]);  // Печать метки
+  lcd.print(data[row - 2]);    // Печать значения
+
+  lcd.setCursor(62, row);
+  lcd.print(labels[row + 2]);  // Печать следующей метки
+  lcd.print(data[row + 2]);    // Печать следующего значения
+}
+  SRV=0; VALUE=at0; MOVETO();
+  SRV=1; VALUE=(at1); MOVETO();
+  SRV=2; VALUE=(180-at2); MOVETO();
+  SRV=3; VALUE=at3; MOVETO();
+}
+
+void irIsr() {
+  ir.tick();
+}
+
+void loop() {
+
+//CALLIBRATION();
+LIDAR();
+
+
+//RUNMOTORA();
+// WELDING();
+//  Xp=0; Yp=350; Zp=230; Qp=60;
+// inverseKinematics(Xp, Yp, Zp, Qp);
+
+
+/*
+//digitalWrite(MOTORB2, LOW);
+
+// ПЫХАЕМ ЛАЗЕРОМ ЧЕРЕЗ МОТОРШИЛД
+//ЧЕРНЫЙ ГОЛОВКА - МОТОР А ПРАВЫЙ
+//БЕЛЫЙ ГОЛОВКА - МОТОР А ЛЕВЫЙ
+//А-И1-А3
+//А-А1-Ф2
+for (int i = 0; i < 25; i++)  { 
+ digitalWrite(MOTORB1, HIGH);
+ delay(50);
+ digitalWrite(MOTORB1, LOW);
+   delay(50);
+}
+*/
+
+
+/*
+if (ir.available()) {
+lcd.clear(); lcd.setCursor(0, 1); lcd.print("PYKA 4.0: OnLine");
+    switch (ir.readCommand()) {
+      // выводим в порт, тут может быть код
+      case IR_1: {
+//      Serial.println("Mode: Console");
+        lcd.clear();
+        lcd.home(); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Console");
+        lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Enter the coordinates x, y, z and the angle of approach to the target of the arduino ide console");
+        serialInput();
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      case IR_2:{
+//         Serial.println("Mode: Manual");
+        lcd.clear();
+        lcd.home(); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("X-0, Y-160, Z-90, Qp-90. Use the remote. Up:Y++, Down:Y--, Left:X--, Right: X++, Star: Z++, Hash: Z--");
+        Xp=0; Yp=350; Zp=230; Qp=60;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      
+      case IR_3: {
+//      Serial.println("Mode: Demo1");
+      lcd.clear();
+      lcd.home();  lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Automatic");
+       lcd.autoPrintln(true);
+      lcd.setCursor(0, 2); lcd.print("Technological welding base mode");
+      
+      break;
+      }
+      
+      case IR_4: {
+
+//unsigned long currentMillis = millis();
+  
+ // if(currentMillis - lastScanTime > scanInterval){
+ //   fullScan(); // Полностью сканируем пространство и обновляем массив
+  //  lastScanTime = currentMillis;
+ // }
+
+  //checkForChanges(); // Проверяем наличие изменений в окружении
+
+
+    //  break;
+      }
+
+      case IR_5: Serial.println("Pressed 5"); break;
+      
+      case IR_6:  {
+//  Serial.println("Mode: Motor A");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Motor A");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the lower drive");
+        RUNMOTORA();
+        break;
+      }
+      case IR_7:  {
+      //  Serial.println("Mode: Motor B");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Motor B");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the uper drive");
+        RUNMOTORB();
+        break;
+      }
+      case IR_8:  {
+       // Serial.println("Mode: lASER A");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Laser A");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Demonstration mode of the lower laser");
+        TARGETING();
+        break;
+        }
+      
+      case IR_9:  {
+      //  Serial.println("Mode: lASER B");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Laser B");
+         lcd.autoPrintln(true);
+        lcd.setCursor(0, 2); lcd.print("Welding demonstration mode");
+        WELDING();
+        break;
+        } 
+            
+      case IR_STAR: {
+      //    Serial.println("Mode: Manual Z+=5");
+          lcd.clear();
+          lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Z+=5");
+         Zp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+
+      case IR_0:  {
+      // Serial.println("Mode: Parking");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Parking");
+        lcd.autoPrintln(true);
+       lcd.setCursor(0, 2); lcd.print("The robot's drives are set to the default position");
+       PARKING();
+       break;
+       }
+
+
+      case IR_HASH: {
+      // Serial.println("Mode: Manual Z-=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Z-=5");
+       Zp-=5;
+       inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      case IR_UP: {
+      // Serial.println("Mode: Manual Y+=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Y+=5");
+        Yp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      case IR_LEFT:  {
+      // Serial.println("Mode: Manual X-=5");
+       lcd.clear();
+       lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual X-=5");
+        Xp-=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      case IR_OK:{
+         lcd.clear();
+         Serial.println("Pressed ok"); 
+         break;
+      }
+
+      case IR_RIGHT: {
+      //  Serial.println("Mode: Manual X+=5");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual X+=5");
+        Xp+=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+      case IR_DOWN: {
+      //  Serial.println("Mode: Manual Y-=5");
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Manual Y-=5");
+        Yp-=5;
+        inverseKinematics(Xp, Yp, Zp, Qp);
+        break;
+      }
+    }
+  }
+}
+*/
+}
+
+
+void serialInput() {
+  char varNames[] = {'X', 'Y', 'Z', 'Q'};  // Массив имен переменных
+  float values[4];                          // Массив значений
+
+  for (byte i = 0; i < 4; ++i) {
+    while (Serial.available() <= 0);          // Ждём данные
+    String inputStr = Serial.readStringUntil('\n');
+    values[i] = inputStr.toFloat();
+
+    switch(varNames[i]) {
+      case 'X': Xp = values[i]; break;
+      case 'Y': Yp = values[i]; break;
+      case 'Z': Zp = values[i]; break;
+      case 'Q': Qp = values[i]; break;
+    }
+
+    Serial.print("Значение ");
+    Serial.print(varNames[i]);
+    Serial.print(" установлено: ");
+    Serial.println(values[i]);
+  }
+}
+/*
+void serialInput(){
+ String inputStrX; 
+  float tempValue;            
+
+  // Ожидание ввода значения X
+  while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();         
+  Xp = tempValue;                            
+  Serial.print("Значение X установлено: "); Serial.println(Xp);
+
+  while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();          
+  Yp = tempValue;                          
+  Serial.print("Значение Y установлено: "); Serial.println(Yp);
+ 
+ while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n');
+  tempValue = inputStrX.toFloat();          
+  Zp = tempValue;                          
+  Serial.print("Значение Z установлено: "); Serial.println(Zp);
+
+ while(Serial.available() <= 0); 
+  inputStrX = Serial.readStringUntil('\n'); 
+  tempValue = inputStrX.toFloat();          
+  Qp = tempValue;                            
+  Serial.print("Значение Qp установлено: "); Serial.println(Qp);
+ 
+}
+*/
+
+void MOVETO() {   // Крутим сервой
+  if (VALUE<SRV_MIN[SRV])  VALUE=SRV_MIN[SRV];
+  if (VALUE>SRV_MAX[SRV]) VALUE=SRV_MAX[SRV];
+
+  if (SRV_CUR[SRV] != VALUE) {  // Проверяем, отличается ли текущее положение от требуемого
+    int stepDir = (SRV_CUR[SRV] > VALUE) ? -1 : +1;  // Определяем направление движения
+      while(SRV_CUR[SRV] != VALUE) {
+      SDRV[SRV].write(SRV_CUR[SRV]);
+      SRV_CUR[SRV] += stepDir;            // Меняем угол пошагово
+      delay(STEP_DELAY * 1.5);           // Задержка шага
+    }
+  }
+}
+
+void PARKING(){
+  for (int i = 0; i < 7; i++) {
+    SRV=i; VALUE=SRV_DEF[i]; MOVETO();
+  }
+}
+
+void TARGETING(){ //НИЖНИЙ ЛАЗЕР
+  for (int i = 0; i < 25; i++)  { 
+    digitalWrite(LASER, HIGH); delay(50);
+    digitalWrite(LASER, LOW); delay(50);                   
+  }
+}
+
+void WELDING(){ //ВЕРХНИЙ ЛАЗЕР
+  for (int i = 0; i < 25; i++)  { 
+  digitalWrite(MOTORB1, HIGH);
+  delay(50);
+  digitalWrite(MOTORB1, LOW);
+  delay(50);
+}
+}
+
+void JAW(){ // СХВАТ
+  
+}
+
+
+void LIDAR(){
+lcd.clear();       // очистка
+lcd.setCursor(0, 0); lcd.print("Mode:"); lcd.setCursor(30, 0); lcd.print("Automatic");
+//fullScan();
+//unsigned long currentMillis = millis();
+ //  SRV=0; VALUE=0; MOVETO();
+  //  if(currentMillis - lastScanTime > scanInterval){
+      fullScan(); // Полностью сканируем пространство и обновляем массив
+  //    lastScanTime = currentMillis;
+  //  }
+ checkForChanges(); // Проверяем наличие изменений в окружении
+}
+
+void CALLIBRATION(){ //
+Serial.println("Введите значения Drv Angle");
+ String inputStrX, inputStrY; // Строки для временного хранения ввода
+//  float tempValue;             // Временная переменная для преобразования строки в число
+
+  // Ожидание ввода значения привод
+  while(Serial.available() <= 0); // Ждем данные в буфере
+  inputStrX = Serial.readStringUntil('\n'); // Читаем строку до нажатия Enter
+  SRV = inputStrX.toFloat();          // Преобразуем строку во float
+  Serial.print("Привод: "); Serial.println(SRV);
+
+  // Ожидание ввода значения угла
+  while(Serial.available() <= 0); // Ждем новые данные
+  inputStrY = Serial.readStringUntil('\n');
+  VALUE = inputStrY.toFloat();
+  Serial.print("угол: "); Serial.println(VALUE);
+MOVETO();  
+}
+
+//-
+
+void RUNMOTORA() {
+   digitalWrite(MOTORA1, HIGH);
+   digitalWrite(MOTORA2, LOW);
+   delay(5000);
+   digitalWrite(MOTORA1, LOW);
+   digitalWrite(MOTORA2, HIGH);
+   delay(5000);
+}
+
+/*
+void RUNMOTORB() {
+  digitalWrite(MOTORB2, LOW);
+  digitalWrite(MOTORB1, HIGH);
+  delay(100);
+  digitalWrite(MOTORB1, LOW);
+  digitalWrite(MOTORB2, HIGH);
+  delay(100);
+}
+*/
+
+void fullScan(){
+lcd.setCursor(0, 2); lcd.print("Scanning...");
+ for(int i=0; i<scanSteps; i++){
+    int angle = map(i, 0, scanSteps-1, 0, 180); // Плавно меняем угол поворота
+      SDRV[0].write(angle); 
+ delay(STEP_DELAY * 20);  
+ //uint16_t dist = sensor.readRangeSingleMillimeters();// Измеряем расстояние
+//uint16_t dist = sensor.readRangeContinuousMillimeters();
+ MEASURE();
+    distanceArray[i] = dist;// / 10.0f; // Сохраняем в метрах
+    lcd.setCursor(0, 3); lcd.print (angle); lcd.print (" / ");lcd.print (dist);///10.0f);
+    Serial.print("Угол "); Serial.print(angle); Serial.print(" Расстояние: "); Serial.println (dist);///10.0f; 
+     }
+SRV=0; VALUE=0; MOVETO();
+}
+
+void checkForChanges(){
+lcd.setCursor(0, 2); lcd.print("Compare data array...");
+  SRV=0;
+  for(int i=0; i<scanSteps; i++){
+   int angle = map(i, 0, scanSteps-1, 0, 180); // Текущий угол поворота
+   SDRV[0].write(angle); 
+  delay(STEP_DELAY * 20);
+    // uint16_t newDist = sensor.readRangeContinuousMillimeters(); 
+                      
+    // Новый замер дистанции
+    //float oldDist = distanceArray[i];
+    MEASURE();
+    target=dist-(distanceArray[i]);
+    Serial.print("Угол "); Serial.print(angle); Serial.print(" Расстояние: "); Serial.println (dist);
+lcd.setCursor(0, 3); lcd.print (dist); lcd.print (" / ");lcd.print (distanceArray[i]);
+    if(abs(target) >= 150){ // Разница должна превышать 5 см
+    
+      Serial.print("Угол "); Serial.print(angle); Serial.print(" Расстояние: "); Serial.print(dist); Serial.print(" / "); Serial.print (distanceArray[i]); Serial.print("Дельта: "); Serial.print(target); Serial.println(" Обнаружен объект!");
+  
+       delay(STEP_DELAY * 50);
+      while(true){
+        int curDist = sensor.readRangeContinuousMillimeters();
+        if(curDist != dist || abs(target) <= 150){
+          break; // Вернулись обратно в стабильное состояние
+        }}
+        
+      }
+    }
+  }
+
+
+
+void MEASURE(){
+dist = sensor.readRangeContinuousMillimeters();
+}
